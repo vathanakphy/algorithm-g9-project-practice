@@ -22,5 +22,4 @@ out\seed.exe
 
 echo.
 echo Seeding complete. The database is ready.
-exit
 pause

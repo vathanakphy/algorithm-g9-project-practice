@@ -3,7 +3,6 @@
 #include <vector>
 
 // --- Connection & Generic Execution ---
-
 bool openDatabase(const std::string& dbName, sqlite3** db) {
     if (sqlite3_open(dbName.c_str(), db)) {
         std::cerr << "Can't open database: " << sqlite3_errmsg(*db) << std::endl;
@@ -26,30 +25,55 @@ bool executeSql(sqlite3* db, const std::string& sql) {
     return true;
 }
 
+// --- Department Functions ---
+bool insertDepartment(sqlite3* db, int id, const std::string& name) {
+    std::string sql = "INSERT INTO departments (ID, NAME) VALUES (" + std::to_string(id) + ", '" + name + "');";
+    return executeSql(db, sql);
+}
 
-// --- Employee CRUD ---
-
-bool insertEmployee(sqlite3* db, int id, const std::string& name, int age, const std::string& department) {
+std::vector<Department> selectAllDepartments(sqlite3* db) {
     sqlite3_stmt* stmt;
-    const char* sql = "INSERT INTO employees (ID, NAME, AGE, DEPARTMENT) VALUES (?, ?, ?, ?);";
-
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
-        return false;
+    const char* sql = "SELECT ID, NAME FROM departments;";
+    std::vector<Department> departments;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            departments.emplace_back(
+                sqlite3_column_int(stmt, 0),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)))
+            );
+        }
     }
-
-    sqlite3_bind_int(stmt, 1, id);
-    sqlite3_bind_text(stmt, 2, name.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_int(stmt, 3, age);
-    sqlite3_bind_text(stmt, 4, department.c_str(), -1, SQLITE_STATIC);
-
-    bool result = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
+    return departments;
+}
 
-    if (!result) {
-        std::cerr << "Insert failed: " << sqlite3_errmsg(db) << std::endl;
+// --- Project Functions ---
+bool insertProject(sqlite3* db, int id, const std::string& name, int departmentId) {
+    std::string sql = "INSERT INTO projects (ID, NAME, DEPARTMENT_ID) VALUES (" + std::to_string(id) + ", '" + name + "', " + std::to_string(departmentId) + ");";
+    return executeSql(db, sql);
+}
+
+std::vector<Project> selectAllProjects(sqlite3* db) {
+    sqlite3_stmt* stmt;
+    const char* sql = "SELECT ID, NAME, DEPARTMENT_ID FROM projects;";
+    std::vector<Project> projects;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            projects.emplace_back(
+                sqlite3_column_int(stmt, 0),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))),
+                sqlite3_column_int(stmt, 2)
+            );
+        }
     }
-    return result;
+    sqlite3_finalize(stmt);
+    return projects;
+}
+
+// --- Employee Functions ---
+bool insertEmployee(sqlite3* db, int id, const std::string& name, int age, int departmentId) {
+    std::string sql = "INSERT INTO employees (ID, NAME, AGE, DEPARTMENT_ID) VALUES (" + std::to_string(id) + ", '" + name + "', " + std::to_string(age) + ", " + std::to_string(departmentId) + ");";
+    return executeSql(db, sql);
 }
 
 bool updateEmployeeName(sqlite3* db, int id, const std::string& newName) {
@@ -58,70 +82,93 @@ bool updateEmployeeName(sqlite3* db, int id, const std::string& newName) {
 }
 
 bool deleteEmployee(sqlite3* db, int id) {
-    std::string sql = "DELETE FROM employees WHERE ID = " + std::to_string(id) + ";";
-    return executeSql(db, sql);
-}
-
-// Callback function to populate a vector of Employee objects
-static int selectCallback(void* data, int argc, char** argv, char** azColName) {
-    auto* employees = static_cast<std::vector<Employee>*>(data);
-    int id = argv[0] ? std::stoi(argv[0]) : 0;
-    std::string name = argv[1] ? argv[1] : "";
-    int age = argv[2] ? std::stoi(argv[2]) : 0;
-    std::string department = argv[3] ? argv[3] : "";
-    employees->emplace_back(id, name, age, department);
-    return 0;
+    executeSql(db, "DELETE FROM employee_projects WHERE EMPLOYEE_ID = " + std::to_string(id) + ";");
+    return executeSql(db, "DELETE FROM employees WHERE ID = " + std::to_string(id) + ";");
 }
 
 std::vector<Employee> selectAllEmployees(sqlite3* db) {
-    const char* sql = "SELECT * FROM employees;";
+    sqlite3_stmt* stmt;
+    const char* sql = "SELECT e.ID, e.NAME, e.AGE, d.NAME FROM employees e JOIN departments d ON e.DEPARTMENT_ID = d.ID;";
     std::vector<Employee> employees;
-    sqlite3_exec(db, sql, selectCallback, &employees, nullptr);
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            employees.emplace_back(
+                sqlite3_column_int(stmt, 0),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))),
+                sqlite3_column_int(stmt, 2),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)))
+            );
+        }
+    }
+    sqlite3_finalize(stmt);
     return employees;
 }
 
 Employee selectEmployeeById(sqlite3* db, int id) {
-    std::string sql = "SELECT * FROM employees WHERE ID = " + std::to_string(id) + ";";
-    std::vector<Employee> employees;
-    sqlite3_exec(db, sql.c_str(), selectCallback, &employees, nullptr);
-
-    if (employees.empty()) {
-        std::cerr << "Employee with ID " << id << " not found." << std::endl;
-        return Employee(0, "", 0, ""); // Return an empty/invalid employee
+    sqlite3_stmt* stmt;
+    const char* sql = "SELECT e.ID, e.NAME, e.AGE, d.NAME FROM employees e JOIN departments d ON e.DEPARTMENT_ID = d.ID WHERE e.ID = ?;";
+    Employee employee(0, "", 0, ""); // Default empty employee
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            employee = Employee(
+                sqlite3_column_int(stmt, 0),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))),
+                sqlite3_column_int(stmt, 2),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)))
+            );
+        } else {
+            std::cerr << "Employee with ID " << id << " not found." << std::endl;
+        }
     }
-    return employees[0];
+    sqlite3_finalize(stmt);
+    return employee;
 }
 
-// New function to search by name
 std::vector<Employee> selectEmployeesByName(sqlite3* db, const std::string& name) {
     sqlite3_stmt* stmt;
-    const char* sql = "SELECT * FROM employees WHERE NAME LIKE ?;";
+    const char* sql = "SELECT e.ID, e.NAME, e.AGE, d.NAME FROM employees e JOIN departments d ON e.DEPARTMENT_ID = d.ID WHERE e.NAME LIKE ?;";
     std::vector<Employee> employees;
-
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
-        return employees;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        std::string searchTerm = "%" + name + "%";
+        sqlite3_bind_text(stmt, 1, searchTerm.c_str(), -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            employees.emplace_back(
+                sqlite3_column_int(stmt, 0),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))),
+                sqlite3_column_int(stmt, 2),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)))
+            );
+        }
     }
+    sqlite3_finalize(stmt);
+    return employees;
+}
 
-    // Bind the search term with wildcards for partial matching
-    std::string searchTerm = "%" + name + "%";
-    sqlite3_bind_text(stmt, 1, searchTerm.c_str(), -1, SQLITE_TRANSIENT);
+// --- Relationship Functions ---
+bool assignEmployeeToProject(sqlite3* db, int employeeId, int projectId) {
+    std::string sql = "INSERT INTO employee_projects (EMPLOYEE_ID, PROJECT_ID) VALUES (" + std::to_string(employeeId) + ", " + std::to_string(projectId) + ");";
+    return executeSql(db, sql);
+}
 
-    // Execute the statement and build the vector
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        int id = sqlite3_column_int(stmt, 0);
-        const unsigned char* name_text = sqlite3_column_text(stmt, 1);
-        int age = sqlite3_column_int(stmt, 2);
-        const unsigned char* dept_text = sqlite3_column_text(stmt, 3);
-
-        employees.emplace_back(
-            id,
-            std::string(reinterpret_cast<const char*>(name_text)),
-            age,
-            std::string(reinterpret_cast<const char*>(dept_text))
-        );
+std::vector<Employee> selectEmployeesByProject(sqlite3* db, int projectId) {
+    sqlite3_stmt* stmt;
+    const char* sql = "SELECT e.ID, e.NAME, e.AGE, d.NAME FROM employees e "
+                      "JOIN departments d ON e.DEPARTMENT_ID = d.ID "
+                      "JOIN employee_projects ep ON e.ID = ep.EMPLOYEE_ID "
+                      "WHERE ep.PROJECT_ID = ?;";
+    std::vector<Employee> employees;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, projectId);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            employees.emplace_back(
+                sqlite3_column_int(stmt, 0),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))),
+                sqlite3_column_int(stmt, 2),
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)))
+            );
+        }
     }
-
     sqlite3_finalize(stmt);
     return employees;
 }
