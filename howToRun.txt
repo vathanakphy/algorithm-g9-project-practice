@@ -1,0 +1,2 @@
+to run the code you need to run file run.bat pls make sure you in the assignment folder
+./run.bat 
